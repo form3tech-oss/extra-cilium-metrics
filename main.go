@@ -39,10 +39,13 @@ const (
 	labelCluster              = "cluster"
 	labelIP                   = "ip"
 	labelName                 = "name"
+	labelProtocol             = "protocol"
 	labelRemote               = "remote"
 	labelSelf                 = "self"
 	labelType                 = "type"
 	labelValueEndpoint        = "endpoint"
+	labelValueHTTP            = "http"
+	labelValueICMP            = "icmp"
 	labelValueNode            = "node"
 	subsystemClusterMesh      = "clustermesh"
 	subsystemNodeConnectivity = "node_connectivity"
@@ -128,6 +131,20 @@ var (
 	}, []string{
 		labelSelf,
 	})
+	nodeConnectivityLatency = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Help:      "The observed latency between the current Cilium agent and other Cilium agents",
+		Name:      "latency",
+		Namespace: namespace,
+		Subsystem: subsystemNodeConnectivity,
+		Buckets:   []float64{1, 2.5, 5, 10, 25, 50, 100, 250, 500, 1000},
+	}, []string{
+		labelSelf,
+		labelName,
+		labelIP,
+		labelRemote,
+		labelType,
+		labelProtocol,
+	})
 	nodeConnectivityStatus = promauto.NewGaugeVec(prometheus.GaugeOpts{
 		Help:      "The status of the connectivity between the current Cilium agent and other Cilium agents",
 		Name:      "status",
@@ -147,8 +164,9 @@ var (
 )
 
 var (
-	lastEtcdLeaseIDs     = make(map[string]string, 0)
-	lastEtcdLockLeaseIDs = make(map[string]string, 0)
+	lastEtcdLeaseIDs          = make(map[string]string, 0)
+	lastEtcdLockLeaseIDs      = make(map[string]string, 0)
+	lastConnectivityTimestamp = ""
 )
 
 func boolToInt32(v bool) int32 {
@@ -192,15 +210,24 @@ func collectMetrics(ciliumClient *ciliumclient.Client, healthClient *healthclien
 	if err != nil {
 		return err
 	}
-	currentClusterName := strings.Split(h.Payload.Cluster.Self, "/")[0]
-	for _, n := range c.Payload.Nodes {
-		remote := !strings.HasPrefix(n.Name, currentClusterName+"/")
-		nodePathStatus := healthclient.GetHostPrimaryAddress(n)
-		nodePathConnectivityStatusType := healthclient.GetPathConnectivityStatusType(nodePathStatus)
-		endpointPathStatus := n.Endpoint
-		endpointPathConnectivityStatusType := healthclient.GetPathConnectivityStatusType(endpointPathStatus)
-		nodeConnectivityStatus.WithLabelValues(h.Payload.Cluster.Self, n.Name, nodePathStatus.IP, strconv.FormatBool(remote), labelValueNode).Set(float64(boolToInt32(nodePathConnectivityStatusType == healthclient.ConnStatusReachable)))
-		nodeConnectivityStatus.WithLabelValues(h.Payload.Cluster.Self, n.Name, endpointPathStatus.IP, strconv.FormatBool(remote), labelValueEndpoint).Set(float64(boolToInt32(endpointPathConnectivityStatusType == healthclient.ConnStatusReachable)))
+	if c.Payload.Timestamp != lastConnectivityTimestamp {
+		lastConnectivityTimestamp = c.Payload.Timestamp
+		currentClusterName := strings.Split(h.Payload.Cluster.Self, "/")[0]
+		for _, n := range c.Payload.Nodes {
+			nodePathStatus := healthclient.GetHostPrimaryAddress(n)
+			nodePathConnectivityStatusType := healthclient.GetPathConnectivityStatusType(nodePathStatus)
+			endpointPathStatus := n.Endpoint
+			endpointPathConnectivityStatusType := healthclient.GetPathConnectivityStatusType(endpointPathStatus)
+			isRemote := strconv.FormatBool(!strings.HasPrefix(n.Name, currentClusterName+"/"))
+			isEndpointReachable := endpointPathConnectivityStatusType == healthclient.ConnStatusReachable
+			isNodeReachable := nodePathConnectivityStatusType == healthclient.ConnStatusReachable
+			nodeConnectivityStatus.WithLabelValues(h.Payload.Cluster.Self, n.Name, endpointPathStatus.IP, isRemote, labelValueEndpoint).Set(float64(boolToInt32(isEndpointReachable)))
+			nodeConnectivityStatus.WithLabelValues(h.Payload.Cluster.Self, n.Name, nodePathStatus.IP, isRemote, labelValueNode).Set(float64(boolToInt32(isNodeReachable)))
+			nodeConnectivityLatency.WithLabelValues(h.Payload.Cluster.Self, n.Name, nodePathStatus.IP, isRemote, labelValueEndpoint, labelValueHTTP).Observe(float64(time.Duration(endpointPathStatus.HTTP.Latency).Milliseconds()))
+			nodeConnectivityLatency.WithLabelValues(h.Payload.Cluster.Self, n.Name, nodePathStatus.IP, isRemote, labelValueEndpoint, labelValueICMP).Observe(float64(time.Duration(endpointPathStatus.Icmp.Latency).Milliseconds()))
+			nodeConnectivityLatency.WithLabelValues(h.Payload.Cluster.Self, n.Name, nodePathStatus.IP, isRemote, labelValueNode, labelValueHTTP).Observe(float64(time.Duration(nodePathStatus.HTTP.Latency).Milliseconds()))
+			nodeConnectivityLatency.WithLabelValues(h.Payload.Cluster.Self, n.Name, nodePathStatus.IP, isRemote, labelValueNode, labelValueICMP).Observe(float64(time.Duration(nodePathStatus.Icmp.Latency).Milliseconds()))
+		}
 	}
 
 	return nil
