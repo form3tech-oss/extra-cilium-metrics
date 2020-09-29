@@ -19,10 +19,15 @@ import (
 	"flag"
 	"net/http"
 	"regexp"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/cilium/cilium/api/v1/client/daemon"
-	"github.com/cilium/cilium/pkg/client"
+	"github.com/cilium/cilium/api/v1/health/client/connectivity"
+	ciliumclient "github.com/cilium/cilium/pkg/client"
+	healthclient "github.com/cilium/cilium/pkg/health/client"
+	"github.com/form3tech-oss/extra-cilium-metrics/version"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -30,10 +35,17 @@ import (
 )
 
 const (
-	namespace            = "cilium_extra"
-	labelCluster         = "cluster"
-	labelSelf            = "self"
-	subsystemClusterMesh = "clustermesh"
+	namespace                 = "cilium_extra"
+	labelCluster              = "cluster"
+	labelIP                   = "ip"
+	labelName                 = "name"
+	labelRemote               = "remote"
+	labelSelf                 = "self"
+	labelType                 = "type"
+	labelValueEndpoint        = "endpoint"
+	labelValueNode            = "node"
+	subsystemClusterMesh      = "clustermesh"
+	subsystemNodeConnectivity = "node_connectivity"
 )
 
 var (
@@ -116,6 +128,18 @@ var (
 	}, []string{
 		labelSelf,
 	})
+	nodeConnectivityStatus = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Help:      "The status of the connectivity between the current Cilium agent and other Cilium agents",
+		Name:      "status",
+		Namespace: namespace,
+		Subsystem: subsystemNodeConnectivity,
+	}, []string{
+		labelSelf,
+		labelName,
+		labelIP,
+		labelRemote,
+		labelType,
+	})
 )
 
 var (
@@ -134,36 +158,51 @@ func boolToInt32(v bool) int32 {
 	return 0
 }
 
-func collectMetrics(ciliumClient *client.Client) error {
+func collectMetrics(ciliumClient *ciliumclient.Client, healthClient *healthclient.Client) error {
 	// Grab information from Cilium's health endpoint.
-	r, err := ciliumClient.Daemon.GetHealthz(daemon.NewGetHealthzParamsWithContext(context.TODO()))
+	h, err := ciliumClient.Daemon.GetHealthz(daemon.NewGetHealthzParamsWithContext(context.TODO()))
 	if err != nil {
 		return err
 	}
 	// Collect metrics about an eventual cluster mesh.
-	n := r.Payload.Cluster.Self
-	m := r.Payload.ClusterMesh
-	clusterMeshTotalRemoteClusters.WithLabelValues(n).Set(float64(len(m.Clusters)))
-	clusterMeshTotalGlobalServices.WithLabelValues(n).Set(float64(m.NumGlobalServices))
-	for _, c := range m.Clusters {
+	clusterMeshTotalRemoteClusters.WithLabelValues(h.Payload.Cluster.Self).Set(float64(len(h.Payload.ClusterMesh.Clusters)))
+	clusterMeshTotalGlobalServices.WithLabelValues(h.Payload.Cluster.Self).Set(float64(h.Payload.ClusterMesh.NumGlobalServices))
+	for _, c := range h.Payload.ClusterMesh.Clusters {
 		if d := clusterMeshRemoteClusterEtcdStatusRegex.FindStringSubmatch(c.Status); len(d) == 0 {
-			clusterMeshRemoteClusterEtcdHasQuorum.WithLabelValues(n, c.Name).Set(0)
+			clusterMeshRemoteClusterEtcdHasQuorum.WithLabelValues(h.Payload.Cluster.Self, c.Name).Set(0)
 		} else {
-			clusterMeshRemoteClusterEtcdHasQuorum.WithLabelValues(n, c.Name).Set(1)
+			clusterMeshRemoteClusterEtcdHasQuorum.WithLabelValues(h.Payload.Cluster.Self, c.Name).Set(1)
 			if d[1] != lastEtcdLeaseIDs[c.Name] {
 				lastEtcdLeaseIDs[c.Name] = d[1]
-				clusterMeshRemoteClusterEtcdTotalObservedLeases.WithLabelValues(n, c.Name).Inc()
+				clusterMeshRemoteClusterEtcdTotalObservedLeases.WithLabelValues(h.Payload.Cluster.Self, c.Name).Inc()
 			}
 			if d[2] != lastEtcdLockLeaseIDs[c.Name] {
 				lastEtcdLockLeaseIDs[c.Name] = d[2]
-				clusterMeshRemoteClusterEtcdTotalObservedLockLeases.WithLabelValues(n, c.Name).Inc()
+				clusterMeshRemoteClusterEtcdTotalObservedLockLeases.WithLabelValues(h.Payload.Cluster.Self, c.Name).Inc()
 			}
 		}
-		clusterMeshRemoteClusterLastFailureTimestamp.WithLabelValues(n, c.Name).Set(float64(time.Time(c.LastFailure).UnixNano()))
-		clusterMeshRemoteClusterReadinessStatus.WithLabelValues(n, c.Name).Set(float64(boolToInt32(c.Ready)))
-		clusterMeshRemoteClusterTotalFailures.WithLabelValues(n, c.Name).Set(float64(c.NumFailures))
-		clusterMeshRemoteClusterTotalNodes.WithLabelValues(n, c.Name).Set(float64(c.NumNodes))
+		clusterMeshRemoteClusterLastFailureTimestamp.WithLabelValues(h.Payload.Cluster.Self, c.Name).Set(float64(time.Time(c.LastFailure).UnixNano()))
+		clusterMeshRemoteClusterReadinessStatus.WithLabelValues(h.Payload.Cluster.Self, c.Name).Set(float64(boolToInt32(c.Ready)))
+		clusterMeshRemoteClusterTotalFailures.WithLabelValues(h.Payload.Cluster.Self, c.Name).Set(float64(c.NumFailures))
+		clusterMeshRemoteClusterTotalNodes.WithLabelValues(h.Payload.Cluster.Self, c.Name).Set(float64(c.NumNodes))
 	}
+
+	// Collect metrics about node-to-node connectivity.
+	c, err := healthClient.Connectivity.GetStatus(connectivity.NewGetStatusParamsWithContext(context.TODO()))
+	if err != nil {
+		return err
+	}
+	currentClusterName := strings.Split(h.Payload.Cluster.Self, "/")[0]
+	for _, n := range c.Payload.Nodes {
+		remote := !strings.HasPrefix(n.Name, currentClusterName+"/")
+		nodePathStatus := healthclient.GetHostPrimaryAddress(n)
+		nodePathConnectivityStatusType := healthclient.GetPathConnectivityStatusType(nodePathStatus)
+		endpointPathStatus := n.Endpoint
+		endpointPathConnectivityStatusType := healthclient.GetPathConnectivityStatusType(endpointPathStatus)
+		nodeConnectivityStatus.WithLabelValues(h.Payload.Cluster.Self, n.Name, nodePathStatus.IP, strconv.FormatBool(remote), labelValueNode).Set(float64(boolToInt32(nodePathConnectivityStatusType == healthclient.ConnStatusReachable)))
+		nodeConnectivityStatus.WithLabelValues(h.Payload.Cluster.Self, n.Name, endpointPathStatus.IP, strconv.FormatBool(remote), labelValueEndpoint).Set(float64(boolToInt32(endpointPathConnectivityStatusType == healthclient.ConnStatusReachable)))
+	}
+
 	return nil
 }
 
@@ -181,7 +220,7 @@ func main() {
 	}
 
 	// Create a client to the Cilium API and attempt to communicate.
-	c, err := client.NewDefaultClient()
+	c, err := ciliumclient.NewDefaultClient()
 	if err != nil {
 		log.Fatalf("Failed to create Cilium client: %v", err)
 	}
@@ -189,17 +228,22 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to reach out to Cilium: %v", err)
 	}
-	log.Debugf("Cilium version: %s", d.Payload.CiliumVersion)
+	// Create a client to the Cilium Health API.
+	h, err := healthclient.NewDefaultClient()
+	if err != nil {
+		log.Fatalf("Failed to create Cilium client: %v", err)
+	}
+
+	log.Infof("extra-cilium-metrics %s (Cilium %s)", version.Version, d.Payload.CiliumVersion)
 
 	// Configure handling of HTTP requests.
-	h := promhttp.Handler()
 	http.HandleFunc("/metrics", func(w http.ResponseWriter, r *http.Request) {
-		if err := collectMetrics(c); err != nil {
+		if err := collectMetrics(c, h); err != nil {
 			log.Error(err)
 			w.WriteHeader(http.StatusInternalServerError)
 		} else {
 			log.Trace("Finished collecting metrics, serving...")
-			h.ServeHTTP(w, r)
+			promhttp.Handler().ServeHTTP(w, r)
 		}
 	})
 	log.Fatal(http.ListenAndServe(*addr, nil))
