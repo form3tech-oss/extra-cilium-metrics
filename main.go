@@ -27,6 +27,7 @@ import (
 	"github.com/cilium/cilium/api/v1/health/client/connectivity"
 	ciliumclient "github.com/cilium/cilium/pkg/client"
 	healthclient "github.com/cilium/cilium/pkg/health/client"
+	"github.com/form3tech-oss/extra-cilium-metrics/version"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -227,13 +228,13 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to reach out to Cilium: %v", err)
 	}
-	log.Debugf("Cilium version: %s", d.Payload.CiliumVersion)
-
 	// Create a client to the Cilium Health API.
 	h, err := healthclient.NewDefaultClient()
 	if err != nil {
 		log.Fatalf("Failed to create Cilium client: %v", err)
 	}
+
+	log.Infof("extra-cilium-metrics %s (Cilium %s)", version.Version, d.Payload.CiliumVersion)
 
 	// Configure handling of HTTP requests.
 	http.HandleFunc("/metrics", func(w http.ResponseWriter, r *http.Request) {

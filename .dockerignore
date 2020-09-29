@@ -1,0 +1,8 @@
+.dockerignore
+.github/
+.travis.yml
+Dockerfile
+LICENSE
+README.md
+hack/
+vendor/
