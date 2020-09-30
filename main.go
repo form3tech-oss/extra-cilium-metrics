@@ -18,6 +18,7 @@ import (
 	"context"
 	"flag"
 	"net/http"
+	"os"
 	"regexp"
 	"strings"
 	"time"
@@ -25,7 +26,9 @@ import (
 	"github.com/cilium/cilium/api/v1/client/daemon"
 	"github.com/cilium/cilium/api/v1/health/client/connectivity"
 	ciliumclient "github.com/cilium/cilium/pkg/client"
+	ciliumdefaults "github.com/cilium/cilium/pkg/defaults"
 	healthclient "github.com/cilium/cilium/pkg/health/client"
+	healthdefaults "github.com/cilium/cilium/pkg/health/defaults"
 	"github.com/form3tech-oss/extra-cilium-metrics/version"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
@@ -50,6 +53,8 @@ const (
 	labelValueRemote          = "remote"
 	subsystemClusterMesh      = "clustermesh"
 	subsystemNodeConnectivity = "node_connectivity"
+	socketsCheckInterval      = 500 * time.Millisecond
+	socketsWaitTimeout        = 5 * time.Minute
 )
 
 var (
@@ -245,6 +250,38 @@ func main() {
 		log.SetLevel(l)
 	}
 
+	log.Infof("extra-cilium-metrics %s", version.Version)
+
+	// Wait for at most 'socketsWaitTimeout' for both Cilium's sockets to be present.
+	tc := time.NewTicker(socketsCheckInterval)
+	defer tc.Stop()
+	tw := time.NewTicker(socketsWaitTimeout)
+	defer tw.Stop()
+	log.Infof("Waiting for Cilium's socket to be present at %s", ciliumdefaults.SockPath)
+loop1:
+	for {
+		select {
+		case <-tc.C:
+			if _, err := os.Stat(ciliumdefaults.SockPath); err == nil {
+				break loop1
+			}
+		case <-tw.C:
+			log.Fatalf("Cilium's socket not found after %s", socketsWaitTimeout.String())
+		}
+	}
+	log.Infof("Waiting for Cilium's health socket to be present at %s", healthdefaults.SockPath)
+loop2:
+	for {
+		select {
+		case <-tc.C:
+			if _, err := os.Stat(healthdefaults.SockPath); err == nil {
+				break loop2
+			}
+		case <-tw.C:
+			log.Fatalf("Cilium's health socket not found after %s", socketsWaitTimeout.String())
+		}
+	}
+
 	// Create a client to the Cilium API and attempt to communicate.
 	c, err := ciliumclient.NewDefaultClient()
 	if err != nil {
@@ -260,7 +297,7 @@ func main() {
 		log.Fatalf("Failed to create Cilium client: %v", err)
 	}
 
-	log.Infof("extra-cilium-metrics %s (Cilium %s)", version.Version, d.Payload.CiliumVersion)
+	log.Infof("Cilium %s", d.Payload.CiliumVersion)
 
 	// Configure handling of HTTP requests.
 	http.HandleFunc("/metrics", func(w http.ResponseWriter, r *http.Request) {
