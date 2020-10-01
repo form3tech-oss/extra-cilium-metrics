@@ -37,10 +37,10 @@ import (
 )
 
 const (
-	namespace                 = "cilium_extra"
-	labelCluster              = "cluster"
-	labelNodeName             = "node_name"
 	labelProtocol             = "protocol"
+	labelSourceCluster        = "source_cluster"
+	labelSourceNodeName       = "source_node_name"
+	labelTargetCluster        = "target_cluster"
 	labelTargetNodeIP         = "target_node_ip"
 	labelTargetNodeName       = "target_node_name"
 	labelTargetNodeType       = "target_node_type"
@@ -51,10 +51,12 @@ const (
 	labelValueLocal           = "local"
 	labelValueNode            = "node"
 	labelValueRemote          = "remote"
-	subsystemClusterMesh      = "clustermesh"
-	subsystemNodeConnectivity = "node_connectivity"
+	namespace                 = "cilium_extra"
+	nodeNameSeparator         = "/"
 	socketsCheckInterval      = 500 * time.Millisecond
 	socketsWaitTimeout        = 5 * time.Minute
+	subsystemClusterMesh      = "clustermesh"
+	subsystemNodeConnectivity = "node_connectivity"
 )
 
 var (
@@ -64,8 +66,9 @@ var (
 		Namespace: namespace,
 		Subsystem: subsystemClusterMesh,
 	}, []string{
-		labelNodeName,
-		labelCluster,
+		labelSourceCluster,
+		labelSourceNodeName,
+		labelTargetCluster,
 	})
 	clusterMeshRemoteClusterEtcdTotalObservedLeases = promauto.NewCounterVec(prometheus.CounterOpts{
 		Help:      "The total number of observed lease IDs on the remote cluster's 'cilium-etcd' cluster belonging to the current Cilium agent",
@@ -73,8 +76,9 @@ var (
 		Namespace: namespace,
 		Subsystem: subsystemClusterMesh,
 	}, []string{
-		labelNodeName,
-		labelCluster,
+		labelSourceCluster,
+		labelSourceNodeName,
+		labelTargetCluster,
 	})
 	clusterMeshRemoteClusterEtcdTotalObservedLockLeases = promauto.NewCounterVec(prometheus.CounterOpts{
 		Help:      "The total number of observed lock lease IDs on the remote cluster's 'cilium-etcd' cluster belonging to the current Cilium agent",
@@ -82,8 +86,9 @@ var (
 		Namespace: namespace,
 		Subsystem: subsystemClusterMesh,
 	}, []string{
-		labelNodeName,
-		labelCluster,
+		labelSourceCluster,
+		labelSourceNodeName,
+		labelTargetCluster,
 	})
 	clusterMeshRemoteClusterLastFailureTimestamp = promauto.NewGaugeVec(prometheus.GaugeOpts{
 		Help:      "The timestamp of the last failure of the remote cluster",
@@ -91,8 +96,9 @@ var (
 		Namespace: namespace,
 		Subsystem: subsystemClusterMesh,
 	}, []string{
-		labelNodeName,
-		labelCluster,
+		labelSourceCluster,
+		labelSourceNodeName,
+		labelTargetCluster,
 	})
 	clusterMeshRemoteClusterReadinessStatus = promauto.NewGaugeVec(prometheus.GaugeOpts{
 		Help:      "The readiness status of the remote cluster",
@@ -100,8 +106,9 @@ var (
 		Namespace: namespace,
 		Subsystem: subsystemClusterMesh,
 	}, []string{
-		labelNodeName,
-		labelCluster,
+		labelSourceCluster,
+		labelSourceNodeName,
+		labelTargetCluster,
 	})
 	clusterMeshRemoteClusterTotalFailures = promauto.NewGaugeVec(prometheus.GaugeOpts{
 		Help:      "The total number of failures related to the remote cluster",
@@ -109,8 +116,9 @@ var (
 		Namespace: namespace,
 		Subsystem: subsystemClusterMesh,
 	}, []string{
-		labelNodeName,
-		labelCluster,
+		labelSourceCluster,
+		labelSourceNodeName,
+		labelTargetCluster,
 	})
 	clusterMeshRemoteClusterTotalNodes = promauto.NewGaugeVec(prometheus.GaugeOpts{
 		Help:      "The total number of nodes in the remote cluster",
@@ -118,8 +126,9 @@ var (
 		Namespace: namespace,
 		Subsystem: subsystemClusterMesh,
 	}, []string{
-		labelNodeName,
-		labelCluster,
+		labelSourceCluster,
+		labelSourceNodeName,
+		labelTargetCluster,
 	})
 	clusterMeshTotalGlobalServices = promauto.NewGaugeVec(prometheus.GaugeOpts{
 		Help:      "The total number of global services in the cluster mesh",
@@ -127,7 +136,8 @@ var (
 		Namespace: namespace,
 		Subsystem: subsystemClusterMesh,
 	}, []string{
-		labelNodeName,
+		labelSourceCluster,
+		labelSourceNodeName,
 	})
 	clusterMeshTotalRemoteClusters = promauto.NewGaugeVec(prometheus.GaugeOpts{
 		Help:      "The total number of remote clusters meshed with the local cluster",
@@ -135,7 +145,8 @@ var (
 		Namespace: namespace,
 		Subsystem: subsystemClusterMesh,
 	}, []string{
-		labelNodeName,
+		labelSourceCluster,
+		labelSourceNodeName,
 	})
 	nodeConnectivityLatency = promauto.NewGaugeVec(prometheus.GaugeOpts{
 		Help:      "The last observed latency (in nanoseconds) between the current Cilium agent and other Cilium agents",
@@ -143,7 +154,9 @@ var (
 		Namespace: namespace,
 		Subsystem: subsystemNodeConnectivity,
 	}, []string{
-		labelNodeName,
+		labelSourceCluster,
+		labelSourceNodeName,
+		labelTargetCluster,
 		labelTargetNodeName,
 		labelTargetNodeIP,
 		labelTargetNodeType,
@@ -156,7 +169,9 @@ var (
 		Namespace: namespace,
 		Subsystem: subsystemNodeConnectivity,
 	}, []string{
-		labelNodeName,
+		labelSourceCluster,
+		labelSourceNodeName,
+		labelTargetCluster,
 		labelTargetNodeName,
 		labelTargetNodeIP,
 		labelTargetNodeType,
@@ -186,27 +201,30 @@ func collectMetrics(ciliumClient *ciliumclient.Client, healthClient *healthclien
 	if err != nil {
 		return err
 	}
+	p := strings.Split(h.Payload.Cluster.Self, nodeNameSeparator)
+	localClusterName := p[0]
+	localNodeName := p[1]
 	// Collect metrics about an eventual cluster mesh.
-	clusterMeshTotalRemoteClusters.WithLabelValues(h.Payload.Cluster.Self).Set(float64(len(h.Payload.ClusterMesh.Clusters)))
-	clusterMeshTotalGlobalServices.WithLabelValues(h.Payload.Cluster.Self).Set(float64(h.Payload.ClusterMesh.NumGlobalServices))
+	clusterMeshTotalRemoteClusters.WithLabelValues(localClusterName, h.Payload.Cluster.Self).Set(float64(len(h.Payload.ClusterMesh.Clusters)))
+	clusterMeshTotalGlobalServices.WithLabelValues(localClusterName, localNodeName).Set(float64(h.Payload.ClusterMesh.NumGlobalServices))
 	for _, c := range h.Payload.ClusterMesh.Clusters {
 		if d := clusterMeshRemoteClusterEtcdStatusRegex.FindStringSubmatch(c.Status); len(d) == 0 {
-			clusterMeshRemoteClusterEtcdHasQuorum.WithLabelValues(h.Payload.Cluster.Self, c.Name).Set(0)
+			clusterMeshRemoteClusterEtcdHasQuorum.WithLabelValues(localClusterName, localNodeName, c.Name).Set(0)
 		} else {
-			clusterMeshRemoteClusterEtcdHasQuorum.WithLabelValues(h.Payload.Cluster.Self, c.Name).Set(1)
+			clusterMeshRemoteClusterEtcdHasQuorum.WithLabelValues(localClusterName, localNodeName, c.Name).Set(1)
 			if d[1] != lastEtcdLeaseIDs[c.Name] {
 				lastEtcdLeaseIDs[c.Name] = d[1]
-				clusterMeshRemoteClusterEtcdTotalObservedLeases.WithLabelValues(h.Payload.Cluster.Self, c.Name).Inc()
+				clusterMeshRemoteClusterEtcdTotalObservedLeases.WithLabelValues(localClusterName, localNodeName, c.Name).Inc()
 			}
 			if d[2] != lastEtcdLockLeaseIDs[c.Name] {
 				lastEtcdLockLeaseIDs[c.Name] = d[2]
-				clusterMeshRemoteClusterEtcdTotalObservedLockLeases.WithLabelValues(h.Payload.Cluster.Self, c.Name).Inc()
+				clusterMeshRemoteClusterEtcdTotalObservedLockLeases.WithLabelValues(localClusterName, localNodeName, c.Name).Inc()
 			}
 		}
-		clusterMeshRemoteClusterLastFailureTimestamp.WithLabelValues(h.Payload.Cluster.Self, c.Name).Set(float64(time.Time(c.LastFailure).UnixNano()))
-		clusterMeshRemoteClusterReadinessStatus.WithLabelValues(h.Payload.Cluster.Self, c.Name).Set(float64(boolToInt32(c.Ready)))
-		clusterMeshRemoteClusterTotalFailures.WithLabelValues(h.Payload.Cluster.Self, c.Name).Set(float64(c.NumFailures))
-		clusterMeshRemoteClusterTotalNodes.WithLabelValues(h.Payload.Cluster.Self, c.Name).Set(float64(c.NumNodes))
+		clusterMeshRemoteClusterLastFailureTimestamp.WithLabelValues(localClusterName, localNodeName, c.Name).Set(float64(time.Time(c.LastFailure).UnixNano()))
+		clusterMeshRemoteClusterReadinessStatus.WithLabelValues(localClusterName, localNodeName, c.Name).Set(float64(boolToInt32(c.Ready)))
+		clusterMeshRemoteClusterTotalFailures.WithLabelValues(localClusterName, localNodeName, c.Name).Set(float64(c.NumFailures))
+		clusterMeshRemoteClusterTotalNodes.WithLabelValues(localClusterName, localNodeName, c.Name).Set(float64(c.NumNodes))
 	}
 
 	// Collect metrics about node-to-node connectivity.
@@ -214,8 +232,10 @@ func collectMetrics(ciliumClient *ciliumclient.Client, healthClient *healthclien
 	if err != nil {
 		return err
 	}
-	currentClusterName := strings.Split(h.Payload.Cluster.Self, "/")[0]
 	for _, n := range c.Payload.Nodes {
+		p := strings.Split(n.Name, nodeNameSeparator)
+		targetClusterName := p[0]
+		targetNodeName := p[1]
 		nodePathStatus := healthclient.GetHostPrimaryAddress(n)
 		nodePathConnectivityStatusType := healthclient.GetPathConnectivityStatusType(nodePathStatus)
 		endpointPathStatus := n.Endpoint
@@ -223,15 +243,15 @@ func collectMetrics(ciliumClient *ciliumclient.Client, healthClient *healthclien
 		isEndpointReachable := endpointPathConnectivityStatusType == healthclient.ConnStatusReachable
 		isNodeReachable := nodePathConnectivityStatusType == healthclient.ConnStatusReachable
 		nodeType := labelValueLocal
-		if !strings.HasPrefix(n.Name, currentClusterName+"/") {
+		if targetClusterName != localClusterName {
 			nodeType = labelValueRemote
 		}
-		nodeConnectivityStatus.WithLabelValues(h.Payload.Cluster.Self, n.Name, endpointPathStatus.IP, nodeType, labelValueEndpoint).Set(float64(boolToInt32(isEndpointReachable)))
-		nodeConnectivityStatus.WithLabelValues(h.Payload.Cluster.Self, n.Name, nodePathStatus.IP, nodeType, labelValueNode).Set(float64(boolToInt32(isNodeReachable)))
-		nodeConnectivityLatency.WithLabelValues(h.Payload.Cluster.Self, n.Name, nodePathStatus.IP, nodeType, labelValueEndpoint, labelValueHTTP).Set(float64(endpointPathStatus.HTTP.Latency))
-		nodeConnectivityLatency.WithLabelValues(h.Payload.Cluster.Self, n.Name, nodePathStatus.IP, nodeType, labelValueEndpoint, labelValueICMP).Set(float64(endpointPathStatus.Icmp.Latency))
-		nodeConnectivityLatency.WithLabelValues(h.Payload.Cluster.Self, n.Name, nodePathStatus.IP, nodeType, labelValueNode, labelValueHTTP).Set(float64(nodePathStatus.HTTP.Latency))
-		nodeConnectivityLatency.WithLabelValues(h.Payload.Cluster.Self, n.Name, nodePathStatus.IP, nodeType, labelValueNode, labelValueICMP).Set(float64(nodePathStatus.Icmp.Latency))
+		nodeConnectivityStatus.WithLabelValues(localClusterName, localNodeName, targetClusterName, targetNodeName, nodePathStatus.IP, nodeType, labelValueEndpoint).Set(float64(boolToInt32(isEndpointReachable)))
+		nodeConnectivityStatus.WithLabelValues(localClusterName, localNodeName, targetClusterName, targetNodeName, nodePathStatus.IP, nodeType, labelValueNode).Set(float64(boolToInt32(isNodeReachable)))
+		nodeConnectivityLatency.WithLabelValues(localClusterName, localNodeName, targetClusterName, targetNodeName, nodePathStatus.IP, nodeType, labelValueEndpoint, labelValueHTTP).Set(float64(endpointPathStatus.HTTP.Latency))
+		nodeConnectivityLatency.WithLabelValues(localClusterName, localNodeName, targetClusterName, targetNodeName, nodePathStatus.IP, nodeType, labelValueEndpoint, labelValueICMP).Set(float64(endpointPathStatus.Icmp.Latency))
+		nodeConnectivityLatency.WithLabelValues(localClusterName, localNodeName, targetClusterName, targetNodeName, nodePathStatus.IP, nodeType, labelValueNode, labelValueHTTP).Set(float64(nodePathStatus.HTTP.Latency))
+		nodeConnectivityLatency.WithLabelValues(localClusterName, localNodeName, targetClusterName, targetNodeName, nodePathStatus.IP, nodeType, labelValueNode, labelValueICMP).Set(float64(nodePathStatus.Icmp.Latency))
 	}
 
 	return nil
