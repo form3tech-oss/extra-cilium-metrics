@@ -59,6 +59,10 @@ const (
 	subsystemNodeConnectivity = "node_connectivity"
 )
 
+type resettableMetric interface {
+	Reset()
+}
+
 var (
 	clusterMeshRemoteClusterEtcdHasQuorum = promauto.NewGaugeVec(prometheus.GaugeOpts{
 		Help:      "Whether the remote cluster's 'cilium-etcd' cluster has quorum",
@@ -180,6 +184,13 @@ var (
 )
 
 var (
+	resettableMetrics = []resettableMetric{
+		nodeConnectivityLatency,
+		nodeConnectivityStatus,
+	}
+)
+
+var (
 	clusterMeshRemoteClusterEtcdStatusRegex = regexp.MustCompile(`^etcd: \d+/\d+ connected, lease-ID=([0-9a-f]+), lock lease-ID=([0-9a-f]+), has-quorum=true`)
 )
 
@@ -196,6 +207,11 @@ func boolToInt32(v bool) int32 {
 }
 
 func collectMetrics(ciliumClient *ciliumclient.Client, healthClient *healthclient.Client) error {
+	// Reset all resettable metrics so that, e.g., nodes that disappear from the cluster(s) are not forever reported as unreachable.
+	for _, m := range resettableMetrics {
+		m.Reset()
+	}
+
 	// Grab information from Cilium's health endpoint.
 	h, err := ciliumClient.Daemon.GetHealthz(daemon.NewGetHealthzParamsWithContext(context.TODO()))
 	if err != nil {
