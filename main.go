@@ -264,10 +264,26 @@ func collectMetrics(ciliumClient *ciliumclient.Client, healthClient *healthclien
 		}
 		nodeConnectivityStatus.WithLabelValues(localClusterName, localNodeName, targetClusterName, targetNodeName, nodePathStatus.IP, nodeType, labelValueEndpoint).Set(float64(boolToInt32(isEndpointReachable)))
 		nodeConnectivityStatus.WithLabelValues(localClusterName, localNodeName, targetClusterName, targetNodeName, nodePathStatus.IP, nodeType, labelValueNode).Set(float64(boolToInt32(isNodeReachable)))
-		nodeConnectivityLatency.WithLabelValues(localClusterName, localNodeName, targetClusterName, targetNodeName, nodePathStatus.IP, nodeType, labelValueEndpoint, labelValueHTTP).Set(float64(endpointPathStatus.HTTP.Latency))
-		nodeConnectivityLatency.WithLabelValues(localClusterName, localNodeName, targetClusterName, targetNodeName, nodePathStatus.IP, nodeType, labelValueEndpoint, labelValueICMP).Set(float64(endpointPathStatus.Icmp.Latency))
-		nodeConnectivityLatency.WithLabelValues(localClusterName, localNodeName, targetClusterName, targetNodeName, nodePathStatus.IP, nodeType, labelValueNode, labelValueHTTP).Set(float64(nodePathStatus.HTTP.Latency))
-		nodeConnectivityLatency.WithLabelValues(localClusterName, localNodeName, targetClusterName, targetNodeName, nodePathStatus.IP, nodeType, labelValueNode, labelValueICMP).Set(float64(nodePathStatus.Icmp.Latency))
+		if endpointPathStatus.HTTP != nil {
+			nodeConnectivityLatency.WithLabelValues(localClusterName, localNodeName, targetClusterName, targetNodeName, nodePathStatus.IP, nodeType, labelValueEndpoint, labelValueHTTP).Set(float64(endpointPathStatus.HTTP.Latency))
+		} else {
+			nodeConnectivityLatency.WithLabelValues(localClusterName, localNodeName, targetClusterName, targetNodeName, nodePathStatus.IP, nodeType, labelValueEndpoint, labelValueHTTP).Set(-1)
+		}
+		if nodePathStatus.HTTP != nil {
+			nodeConnectivityLatency.WithLabelValues(localClusterName, localNodeName, targetClusterName, targetNodeName, nodePathStatus.IP, nodeType, labelValueNode, labelValueHTTP).Set(float64(nodePathStatus.HTTP.Latency))
+		} else {
+			nodeConnectivityLatency.WithLabelValues(localClusterName, localNodeName, targetClusterName, targetNodeName, nodePathStatus.IP, nodeType, labelValueNode, labelValueHTTP).Set(-1)
+		}
+		if endpointPathStatus.Icmp != nil {
+			nodeConnectivityLatency.WithLabelValues(localClusterName, localNodeName, targetClusterName, targetNodeName, nodePathStatus.IP, nodeType, labelValueEndpoint, labelValueICMP).Set(float64(endpointPathStatus.Icmp.Latency))
+		} else {
+			nodeConnectivityLatency.WithLabelValues(localClusterName, localNodeName, targetClusterName, targetNodeName, nodePathStatus.IP, nodeType, labelValueEndpoint, labelValueICMP).Set(-1)
+		}
+		if nodePathStatus.Icmp != nil {
+			nodeConnectivityLatency.WithLabelValues(localClusterName, localNodeName, targetClusterName, targetNodeName, nodePathStatus.IP, nodeType, labelValueNode, labelValueICMP).Set(float64(nodePathStatus.Icmp.Latency))
+		} else {
+			nodeConnectivityLatency.WithLabelValues(localClusterName, localNodeName, targetClusterName, targetNodeName, nodePathStatus.IP, nodeType, labelValueNode, labelValueICMP).Set(-1)
+		}
 	}
 
 	return nil
