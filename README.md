@@ -5,7 +5,7 @@ An exporter of extra Cilium metrics in Prometheus format.
 The purpose of `extra-cilium-metrics` is to provide extra cilium metrics which are not exposed by [built-in Prometheus exporter](https://docs.cilium.io/en/v1.9/operations/metrics/).
 
 Extra metrics were hand picked based on their usefulness to us. Data for them is provided by Cilium API but they are not exposed as Prometheus metric.
-Collection of metrics is synchronous operation, aka there will be collected from cilium at the `/metrics` handler invocation.
+Collection of metrics is synchronous operation, i.e. they will be collected from cilium agent at the `/metrics` handler invocation.
 
 The application is meant to be run as cilium agent k8s pod sidecar.
 
