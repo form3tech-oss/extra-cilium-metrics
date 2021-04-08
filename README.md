@@ -2,7 +2,7 @@
 
 An exporter of extra Cilium metrics in Prometheus format.
 
-The purpose of `extra-cilium-metrics` is to provide extra cilium metric which are not exposed by [build in Prometheus exporter](https://docs.cilium.io/en/v1.9/operations/metrics/).
+The purpose of `extra-cilium-metrics` is to provide extra cilium metrics which are not exposed by [built-in Prometheus exporter](https://docs.cilium.io/en/v1.9/operations/metrics/).
 
 Extra metrics were hand picked based on there usefulness to us. Data for them is provided by Cilium API but were not exposed as Prometheus metric.
 Collection of metrics is synchronous operation, aka there will be collected from cilium at the `/metrics` handler invocation.
@@ -24,4 +24,3 @@ List of metrics
 | `total_remote_clusters`                          | The total number of remote clusters meshed with the local cluster                                                               |
 | `latency`                                        | The last observed latency (in nanoseconds) between the current Cilium agent and other Cilium agents                             |
 | `status`                                         | The last observed status of the connectivity between the current Cilium agent and other Cilium agents                           |
-
