@@ -254,7 +254,12 @@ func collectMetrics(ciliumClient *ciliumclient.Client, healthClient *healthclien
 		targetNodeName := p[1]
 		nodePathStatus := healthclient.GetHostPrimaryAddress(n)
 		nodePathConnectivityStatusType := healthclient.GetPathConnectivityStatusType(nodePathStatus)
+
 		endpointPathStatus := n.Endpoint
+		if endpointPathStatus == nil {
+			log.Warnf("cilium metrics about node-to-node connectivity for node %q can not be fetched, the endpoint is not present", n.Name)
+			continue
+		}
 		endpointPathConnectivityStatusType := healthclient.GetPathConnectivityStatusType(endpointPathStatus)
 		isEndpointReachable := endpointPathConnectivityStatusType == healthclient.ConnStatusReachable
 		isNodeReachable := nodePathConnectivityStatusType == healthclient.ConnStatusReachable
