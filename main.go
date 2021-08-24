@@ -254,12 +254,7 @@ func collectMetrics(ciliumClient *ciliumclient.Client, healthClient *healthclien
 		targetNodeName := p[1]
 		nodePathStatus := healthclient.GetHostPrimaryAddress(n)
 		nodePathConnectivityStatusType := healthclient.GetPathConnectivityStatusType(nodePathStatus)
-
 		endpointPathStatus := n.Endpoint
-		if endpointPathStatus == nil {
-			log.Warnf("cilium metrics about node-to-node connectivity for node %q can not be fetched, the endpoint is not present", n.Name)
-			continue
-		}
 		endpointPathConnectivityStatusType := healthclient.GetPathConnectivityStatusType(endpointPathStatus)
 		isEndpointReachable := endpointPathConnectivityStatusType == healthclient.ConnStatusReachable
 		isNodeReachable := nodePathConnectivityStatusType == healthclient.ConnStatusReachable
@@ -269,7 +264,7 @@ func collectMetrics(ciliumClient *ciliumclient.Client, healthClient *healthclien
 		}
 		nodeConnectivityStatus.WithLabelValues(localClusterName, localNodeName, targetClusterName, targetNodeName, nodePathStatus.IP, nodeType, labelValueEndpoint).Set(float64(boolToInt32(isEndpointReachable)))
 		nodeConnectivityStatus.WithLabelValues(localClusterName, localNodeName, targetClusterName, targetNodeName, nodePathStatus.IP, nodeType, labelValueNode).Set(float64(boolToInt32(isNodeReachable)))
-		if endpointPathStatus.HTTP != nil {
+		if endpointPathStatus != nil && endpointPathStatus.HTTP != nil {
 			nodeConnectivityLatency.WithLabelValues(localClusterName, localNodeName, targetClusterName, targetNodeName, nodePathStatus.IP, nodeType, labelValueEndpoint, labelValueHTTP).Set(float64(endpointPathStatus.HTTP.Latency))
 		} else {
 			nodeConnectivityLatency.WithLabelValues(localClusterName, localNodeName, targetClusterName, targetNodeName, nodePathStatus.IP, nodeType, labelValueEndpoint, labelValueHTTP).Set(-1)
@@ -279,7 +274,7 @@ func collectMetrics(ciliumClient *ciliumclient.Client, healthClient *healthclien
 		} else {
 			nodeConnectivityLatency.WithLabelValues(localClusterName, localNodeName, targetClusterName, targetNodeName, nodePathStatus.IP, nodeType, labelValueNode, labelValueHTTP).Set(-1)
 		}
-		if endpointPathStatus.Icmp != nil {
+		if endpointPathStatus != nil && endpointPathStatus.Icmp != nil {
 			nodeConnectivityLatency.WithLabelValues(localClusterName, localNodeName, targetClusterName, targetNodeName, nodePathStatus.IP, nodeType, labelValueEndpoint, labelValueICMP).Set(float64(endpointPathStatus.Icmp.Latency))
 		} else {
 			nodeConnectivityLatency.WithLabelValues(localClusterName, localNodeName, targetClusterName, targetNodeName, nodePathStatus.IP, nodeType, labelValueEndpoint, labelValueICMP).Set(-1)
